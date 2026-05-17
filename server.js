@@ -3,6 +3,7 @@
 // --- 1. SETUP & IMPORTS ---
 const https = require('https');
 const fs = require('fs');
+const crypto = require('crypto');
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/' });
 const querystring = require('querystring'); // Needed for Clever API fix
@@ -18,15 +19,33 @@ const session = require('express-session');
 const passport = require('passport');
 const CleverStrategy = require('passport-clever').Strategy;
 const db = require('./db');
+const { createValidatedConfig } = require('./config');
+const { createBackendClient } = require('./backend-client');
+const { handleCleverCallback, handleLogout } = require('./callback-handler');
+const {
+  buildDashboardLinkStatus,
+  hasBackendAdminCapability,
+  hasDemoAdminAccess,
+  sendBackendAdminDenied
+} = require('./link-status');
+
+const runtimeConfig = createValidatedConfig();
+const backendClient = createBackendClient(runtimeConfig);
 
 const app = express();
+app.locals.runtimeConfig = runtimeConfig;
+app.locals.backendClient = backendClient;
+
+function supportReference(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
 
 // --- 2. CONFIGURATION ---
 app.set('view engine', 'ejs');
 
 // Setup Session
 app.use(session({
-    secret: process.env.SESSION_SECRET,
+    secret: runtimeConfig.SESSION_SECRET,
     resave: false,
     saveUninitialized: false
 }));
@@ -37,9 +56,9 @@ app.use(passport.session());
 
 // --- 3. PASSPORT STRATEGY ---
 passport.use(new CleverStrategy({
-    clientID: process.env.CLEVER_CLIENT_ID,
-    clientSecret: process.env.CLEVER_CLIENT_SECRET,
-    callbackURL: "http://localhost:3000/auth/clever/callback",
+    clientID: runtimeConfig.CLEVER_CLIENT_ID,
+    clientSecret: runtimeConfig.CLEVER_CLIENT_SECRET,
+    callbackURL: runtimeConfig.CLEVER_CALLBACK_URL,
     passReqToCallback: true
 },
 function(req, accessToken, refreshToken, profile, done) {
@@ -95,20 +114,18 @@ app.get('/', (req, res) => {
 // Login Button
 app.get('/login/clever', passport.authenticate('clever'));
 
-// Callback (After Login)
+// Callback (After Login) - SSO-2: Backend session handshake
 app.get('/auth/clever/callback',
     passport.authenticate('clever', { failureRedirect: '/' }),
-    (req, res) => {
-        // Redirect based on the ROLE we determined earlier
-        const role = (req.user.data && req.user.data.type === 'district_admin') || req.user.email === 'katie.gardner+demo@clever.com' ? 'district_admin' : 'student';
-        
-        if (role === 'district_admin') {
-            res.redirect('/admin');
-        } else {
-            res.redirect('/dashboard');
-        }
+    async (req, res) => {
+        await handleCleverCallback(req, res, backendClient);
     }
 );
+
+// Logout - SSO-2: Session cleanup
+app.get('/logout', async (req, res) => {
+    await handleLogout(req, res, backendClient);
+});
 
 // Student / Teacher / Admin Dashboard with multi-role + role toggle
 app.get('/dashboard', (req, res) => {
@@ -344,7 +361,8 @@ res.render('dashboard', {
   role: activeRole,
   PrettyRole,
   userSchools,
-  classes
+  classes,
+  linkStatus: buildDashboardLinkStatus(req.session?.backendSession)
 });
 
 }); 
@@ -353,10 +371,7 @@ res.render('dashboard', {
 app.get('/admin', (req, res) => {
   if (!req.isAuthenticated()) return res.redirect('/');
 
-  const isSuperAdmin  = req.user.email === 'katie.gardner+demo@clever.com';
-  const isCleverAdmin = req.user.data && req.user.data.type === 'district_admin';
-
-  if (!isSuperAdmin && !isCleverAdmin) {
+  if (!hasDemoAdminAccess(req)) {
     return res.send("Access Denied: You are not an Admin!");
   }
 
@@ -384,7 +399,8 @@ app.get('/admin', (req, res) => {
   res.render('admin', {
     user: req.user,
     allUsers,
-    allSchools
+    allSchools,
+    backendAdminCapability: hasBackendAdminCapability(req)
   });
 });
 
@@ -425,14 +441,14 @@ app.post('/admin/upload', upload.single('roster'), (req, res) => {
         insert.run(fakeId, name, role, email);
         count++;
       } catch (e) {
-        console.error('CSV insert error:', e.message);
+        console.error('CSV insert error: row skipped');
       }
     });
 
     fs.unlinkSync(req.file.path);
     res.send(`<h1>Success!</h1><p>Uploaded ${count} new users.</p><a href="/admin">Back to Dashboard</a>`);
   } catch (error) {
-    console.error('CSV upload error:', error);
+    console.error('CSV upload error: processing failed');
     res.status(500).send("Error processing file.");
   }
 });
@@ -468,11 +484,12 @@ async function fetchAllCleverRecords(districtToken, pathWithQuery) {
 app.post('/admin/sync', async (req, res) => {
   if (!req.isAuthenticated()) return res.send("Access Denied");
 
-  const isSuperAdmin  = req.user.email === 'katie.gardner+demo@clever.com';
-  const isCleverAdmin = req.user.data && req.user.data.type === 'district_admin';
-
-  if (!isSuperAdmin && !isCleverAdmin) {
+  if (!hasDemoAdminAccess(req)) {
     return res.send("Access Denied: You are not an Admin!");
+  }
+
+  if (!hasBackendAdminCapability(req)) {
+    return sendBackendAdminDenied(res);
   }
 
   console.log("🔶🔶🔶 VERSION CHECK: V12 (USERS + SECTIONS + SCHOOLS + ENROLLMENTS) 🔶🔶🔶");
@@ -491,7 +508,7 @@ app.post('/admin/sync', async (req, res) => {
       params:  { owner_type: 'district', district: distId }
     });
 
-    console.log("Raw /oauth/tokens response:", JSON.stringify(tokensResp.data, null, 2));
+    console.log("✅ Received district-app token response from Clever");
 
     const tokens = tokensResp.data.data || [];
     if (!tokens.length) {
@@ -499,7 +516,7 @@ app.post('/admin/sync', async (req, res) => {
     }
 
     const districtToken = String(tokens[0].access_token || tokens[0].token).trim();
-    console.log("✅ Obtained District-App Token:", districtToken.slice(0, 8) + "…");
+    console.log("✅ District-app token available for this sync");
 
     // ----- 2) Pull all users + sections + schools -----
     console.log("📥 Fetching all users via /users...");
@@ -526,7 +543,7 @@ app.post('/admin/sync', async (req, res) => {
         insertSchool.run(s.id, s.name || 'Unnamed School');
         schoolInsertCount++;
       } catch (err) {
-        console.error(`Error inserting school ${s.id}:`, err.message);
+        console.error(`Error inserting school ${s.id}: row skipped`);
       }
     }
     console.log(`✅ Inserted/updated ${schoolInsertCount} schools`);
@@ -572,7 +589,7 @@ app.post('/admin/sync', async (req, res) => {
         insertUser.run(u.id, name, role, email);
         userInsertCount++;
       } catch (err) {
-        console.error(`Error inserting user ${u.id}:`, err.message);
+        console.error(`Error inserting user ${u.id}: row skipped`);
       }
 
       const roles = u.roles || {};
@@ -599,7 +616,7 @@ app.post('/admin/sync', async (req, res) => {
         try {
           insertUserSchool.run(u.id, sid);
         } catch (err) {
-          console.error(`Error linking user ${u.id} to school ${sid}:`, err.message);
+          console.error(`Error linking user ${u.id} to school ${sid}: row skipped`);
         }
       });
     }
@@ -620,7 +637,7 @@ app.post('/admin/sync', async (req, res) => {
         insertSection.run(s.id, s.name || 'Untitled Section', s.school || null);
         sectionInsertCount++;
       } catch (err) {
-        console.error(`Error inserting section ${s.id}:`, err.message);
+        console.error(`Error inserting section ${s.id}: row skipped`);
       }
     }
 
@@ -672,9 +689,10 @@ app.post('/admin/sync', async (req, res) => {
       <a href="/admin">Back to Dashboard</a>
     `);
   } catch (err) {
-    console.error("Sync Error:", err.response?.data || err.message);
-    res.send(
-      `Sync failed: ${err.message}<br><pre>${JSON.stringify(err.response?.data, null, 2)}</pre>`
+    const reference = supportReference('sync');
+    console.error(`Sync failed (${reference})`);
+    res.status(502).send(
+      `Sync failed. Please contact support with reference ${reference}.`
     );
   }
 });
@@ -683,10 +701,7 @@ app.post('/admin/sync', async (req, res) => {
 app.get('/admin/users/:cleverId', (req, res) => {
   if (!req.isAuthenticated()) return res.redirect('/');
 
-  const isSuperAdmin  = req.user.email === 'katie.gardner+demo@clever.com';
-  const isCleverAdmin = req.user.data && req.user.data.type === 'district_admin';
-
-  if (!isSuperAdmin && !isCleverAdmin) {
+  if (!hasDemoAdminAccess(req)) {
     return res.send("Access Denied: You are not an Admin!");
   }
 
@@ -775,9 +790,7 @@ app.get('/admin/users/:cleverId', (req, res) => {
 app.get('/admin/events', (req, res) => {
   if (!req.isAuthenticated()) return res.redirect('/');
 
-  const isSuperAdmin  = req.user.email === 'katie.gardner+demo@clever.com';
-  const isCleverAdmin = req.user.data && req.user.data.type === 'district_admin';
-  if (!isSuperAdmin && !isCleverAdmin) {
+  if (!hasDemoAdminAccess(req)) {
     return res.send("Access Denied: You are not an Admin!");
   }
 
@@ -833,7 +846,8 @@ app.get('/admin/events', (req, res) => {
     events,
     filters: { type, recordType, q, limit },
     fetched: Number(req.query.fetched || 0),
-    inserted: Number(req.query.inserted || 0)
+    inserted: Number(req.query.inserted || 0),
+    backendAdminCapability: hasBackendAdminCapability(req)
   });
 });
 
@@ -843,9 +857,8 @@ app.post('/admin/events/fetch', async (req, res) => {
 
   if (!req.isAuthenticated()) return res.redirect('/');
 
-  const isSuperAdmin  = req.user.email === 'katie.gardner+demo@clever.com';
-  const isCleverAdmin = req.user.data && req.user.data.type === 'district_admin';
-  if (!isSuperAdmin && !isCleverAdmin) return res.send("Access Denied");
+  if (!hasDemoAdminAccess(req)) return res.send("Access Denied");
+  if (!hasBackendAdminCapability(req)) return sendBackendAdminDenied(res);
 
   try {
     const clientId     = process.env.CLEVER_CLIENT_ID.trim();
@@ -892,9 +905,10 @@ app.post('/admin/events/fetch', async (req, res) => {
 
     return res.redirect(`/admin/events?fetched=${data.length}&inserted=${inserted}`);
   } catch (err) {
-    console.error("Events fetch error:", err.response?.data || err.message);
+    const reference = supportReference('events');
+    console.error(`Events fetch failed (${reference})`);
     return res.status(500).send(
-      `Events fetch failed: ${err.message}<br><pre>${JSON.stringify(err.response?.data, null, 2)}</pre>`
+      `Events fetch failed. Please contact support with reference ${reference}.`
     );
   }
 }); // ✅ THIS was missing

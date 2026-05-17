@@ -266,13 +266,35 @@
     color: #6b7280;
     font-size: 0.9rem;
   }
+
+  .auth-note {
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 10px;
+    color: #9a3412;
+    margin-bottom: 16px;
+    padding: 12px 14px;
+  }
+
+  .btn[disabled] {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
 </style>
 
 <div class="admin-container">
+  <% const canRunBackendMigrationActions = backendAdminCapability === true; %>
+
   <div class="page-title">
     <h1>Admin Dashboard</h1>
     <span class="page-subtitle">Manage rostering & users from Clever</span>
   </div>
+
+  <% if (!canRunBackendMigrationActions) { %>
+    <div class="auth-note">
+      Backend authorization has not granted migration capability. Demo admin access can view tools, but cannot run backend migration actions.
+    </div>
+  <% } %>
 
   <!-- Top cards -->
   <div class="card-grid">
@@ -284,7 +306,7 @@
 
       <div class="card-actions">
         <form action="/admin/sync" method="POST">
-          <button type="submit" class="btn btn-primary">🔄 Sync Now</button>
+          <button type="submit" class="btn btn-primary" <%= canRunBackendMigrationActions ? '' : 'disabled' %>>🔄 Sync Now</button>
         </form>
       </div>
     </div>

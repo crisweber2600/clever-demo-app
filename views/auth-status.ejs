@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Status</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .status-container {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+        }
+        .status-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        .status-pending { color: #f39c12; }
+        .status-blocked { color: #e74c3c; }
+        .status-error { color: #e74c3c; }
+        .status-title {
+            font-size: 24px;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .status-message {
+            font-size: 16px;
+            color: #555;
+            margin-bottom: 20px;
+        }
+        .correlation-id {
+            font-size: 12px;
+            color: #999;
+            margin-top: 30px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+        .home-link {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 10px 20px;
+            background: #2F6C95;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+        .home-link:hover {
+            background: #1d4e6e;
+        }
+    </style>
+</head>
+<body>
+    <div class="status-container">
+        <% if (status === 'pendingLink') { %>
+            <div class="status-icon status-pending">⏳</div>
+            <div class="status-title">Account Linking Pending</div>
+        <% } else if (status === 'blocked') { %>
+            <div class="status-icon status-blocked">🚫</div>
+            <div class="status-title">Access Not Available</div>
+        <% } else { %>
+            <div class="status-icon status-error">⚠️</div>
+            <div class="status-title">Sign-In Error</div>
+        <% } %>
+        
+        <div class="status-message">
+            <%= message %>
+        </div>
+
+        <a href="/" class="home-link">Return to Home</a>
+
+        <% if (correlationId) { %>
+            <div class="correlation-id">
+                <strong>Reference ID:</strong> <%= correlationId %>
+                <br>
+                <small>Please provide this reference when contacting support.</small>
+            </div>
+        <% } %>
+    </div>
+</body>
+</html>

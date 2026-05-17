@@ -132,6 +132,31 @@
         font-size: 0.95rem;
         margin: 0;
       }
+
+      .context-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 14px;
+      }
+
+      .context-card h2 {
+        margin: 0 0 8px 0;
+        font-size: 1.05rem;
+      }
+
+      .context-card p {
+        margin: 4px 0;
+        color: #4b5563;
+        font-size: 0.92rem;
+      }
+
+      .status-linked {
+        border-left: 5px solid #16a34a;
+      }
+
+      .status-not-linked {
+        border-left: 5px solid #f59e0b;
+      }
     </style>
   </head>
 
@@ -143,6 +168,7 @@
       <% const hasMultipleRoles = Array.isArray(roles) && roles.length > 1; %>
       <% const active = activeRole || role || 'unknown'; %>
       <% const pretty = PrettyRole || active; %>
+      <% const link = linkStatus || {}; %>
 
       <div class="topbar">
         <div class="title">
@@ -180,6 +206,34 @@
             <% }); %>
           </div>
         <% } %>
+      </div>
+
+      <div class="context-grid">
+        <div class="card context-card status-<%= link.state || 'not-linked' %>">
+          <h2>NorthStar Account Context</h2>
+          <p><b><%= link.title || 'NorthStar Link Not Confirmed' %></b></p>
+          <p><%= link.message || 'This dashboard is showing local Clever demo data only.' %></p>
+
+          <% if (link.northstarUserName || link.northstarDistrictName || link.northstarRole) { %>
+            <% if (link.northstarUserName) { %>
+              <p><b>User:</b> <%= link.northstarUserName %><% if (link.northstarUserId) { %> (<%= link.northstarUserId %>)<% } %></p>
+            <% } %>
+            <% if (link.northstarDistrictName) { %>
+              <p><b>District:</b> <%= link.northstarDistrictName %><% if (link.northstarDistrictId) { %> (<%= link.northstarDistrictId %>)<% } %></p>
+            <% } %>
+            <% if (link.northstarRole) { %>
+              <p><b>Backend role:</b> <%= link.northstarRole %></p>
+            <% } %>
+          <% } else { %>
+            <p class="empty">No backend-approved NorthStar account mapping has been confirmed for this session.</p>
+          <% } %>
+        </div>
+
+        <div class="card context-card">
+          <h2>Clever Demo Roster Data</h2>
+          <p><b><%= link.rosterSourceLabel || 'Clever-sourced demo roster data' %></b></p>
+          <p><%= link.rosterSourceDescription || 'Classes, schools, and roster rows below come from the local SQLite demo database and are not authoritative NorthStar account state.' %></p>
+        </div>
       </div>
 
       <div class="card">
@@ -227,4 +281,3 @@
     </div>
   </body>
 </html>
-

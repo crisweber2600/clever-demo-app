@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "mocha test/**/*.test.js --exit",
+    "test:watch": "mocha test/**/*.test.js --watch"
   },
   "keywords": [],
   "author": "",
@@ -21,5 +22,9 @@
     "multer": "^2.0.2",
     "passport": "^0.7.0",
     "passport-clever": "^1.0.2"
+  },
+  "devDependencies": {
+    "chai": "^6.2.2",
+    "mocha": "^11.7.5"
   }
 }

@@ -4,6 +4,20 @@
 const crypto = require('crypto');
 const { toSafeAuthStatusViewModel } = require('./link-status');
 
+const ADMIN_ROLES = new Set(['district_admin', 'school_admin', 'staff_admin', 'admin']);
+
+function buildDisplayName(user = {}) {
+  if (typeof user.displayName === 'string' && user.displayName.trim()) {
+    return user.displayName.trim();
+  }
+
+  if (user.name && (user.name.first || user.name.last)) {
+    return [user.name.first, user.name.last].filter(Boolean).join(' ').trim();
+  }
+
+  return undefined;
+}
+
 /**
  * Validates the backend session response schema
  * @param {Object} response - Backend session response
@@ -43,7 +57,11 @@ async function handleCleverCallback(req, res, backendClient) {
     // Prepare the Clever identity payload for backend verification
     const cleverIdentity = {
       userId: req.user.id,
-      districtId: req.user.data?.district || req.user.data?.district_id
+      districtId: req.user.data?.district || req.user.data?.district_id || req.user.districtId,
+      userType: req.user.data?.type || req.user.type,
+      email: req.user.email || req.user.data?.email,
+      displayName: buildDisplayName(req.user),
+      accessToken: req.user.token || req.user.accessToken
     };
 
     // Call backend session endpoint before any routing decision
@@ -72,11 +90,12 @@ async function handleCleverCallback(req, res, backendClient) {
 
       // Route based on backend-approved role
       const role = backendResponse.displayContext.role;
-      if (role === 'district_admin') {
+      if (ADMIN_ROLES.has(role)) {
         return res.redirect('/admin');
       } else {
         return res.redirect('/dashboard');
       }
+
     } else {
       // Non-linked status (pendingLink, blocked, error) - render support-safe state
       return res.render('auth-status', toSafeAuthStatusViewModel(backendResponse));
@@ -129,5 +148,6 @@ async function handleLogout(req, res, backendClient) {
 module.exports = {
   handleCleverCallback,
   handleLogout,
-  validateBackendSessionResponse
+  validateBackendSessionResponse,
+  buildDisplayName
 };

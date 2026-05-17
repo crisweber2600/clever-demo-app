@@ -10,6 +10,8 @@ function createBackendClient(config) {
   } catch (error) {
     throw new Error(`Backend API configuration validation failed: ${error.message}`);
   }
+
+  const integrationEnabled = config.CLEVER_BACKEND_INTEGRATION_ENABLED !== false;
   
   const httpClient = axios.create({
     baseURL: config.UPGRADE_API_BASE_URL,
@@ -24,6 +26,17 @@ function createBackendClient(config) {
     _httpClient: httpClient,
     
     async createSession(cleverIdentity) {
+      if (!integrationEnabled) {
+        return {
+          status: 'blocked',
+          reasonCode: 'INTEGRATION_DISABLED',
+          correlationId: 'integration-disabled',
+          displayContext: {
+            message: 'Clever integration is temporarily disabled during rollout.'
+          }
+        };
+      }
+
       const authHeader = `Basic ${Buffer.from(
         `${config.UPGRADE_API_CLIENT_ID}:${config.UPGRADE_API_CLIENT_SECRET}`
       ).toString('base64')}`;
@@ -41,7 +54,7 @@ function createBackendClient(config) {
           }
         );
         
-        return response.data;
+        return normalizeSessionResponse(response.data);
       } catch (error) {
         if (error.response) {
           throw new Error(`Backend API request failed: ${error.response.status} ${error.response.statusText}`);
@@ -56,6 +69,10 @@ function createBackendClient(config) {
     async logout(sessionRef) {
       if (!sessionRef) {
         return { success: true };
+      }
+
+      if (!integrationEnabled) {
+        return { success: true, skipped: true };
       }
       
       const authHeader = `Basic ${Buffer.from(
@@ -80,6 +97,18 @@ function createBackendClient(config) {
   return client;
 }
 
+function normalizeSessionResponse(data) {
+  if (data && data.status === 'success') {
+    return {
+      ...data,
+      status: 'linked'
+    };
+  }
+
+  return data;
+}
+
 module.exports = {
-  createBackendClient
+  createBackendClient,
+  normalizeSessionResponse
 };
